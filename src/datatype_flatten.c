@@ -14,7 +14,7 @@ void flat_list_free(flat_list_t *list) {
     list->cap = 0;
 }
 
-static void flat_list_append(flat_list_t *list, MPI_Aint offset, MPI_Aint length) {
+static void flat_list_append(flat_list_t *list, U_MPI_Aint offset, U_MPI_Aint length) {
     if (length == 0) return;
 
     if (list->count > 0) {
@@ -34,89 +34,80 @@ static void flat_list_append(flat_list_t *list, MPI_Aint offset, MPI_Aint length
     list->count++;
 }
 
-void flatten_datatype(MPI_Datatype dtype, int count, MPI_Aint base_offset, flat_list_t *out) {
+void flatten_datatype(U_MPI_Datatype dtype, int count, U_MPI_Aint base_offset, flat_list_t *out) {
     int n_ints, n_addrs, n_dtypes, combiner;
-    PMPI_Type_get_envelope(dtype, &n_ints, &n_addrs, &n_dtypes, &combiner);
+    g_mpi.Type_get_envelope(dtype, &n_ints, &n_addrs, &n_dtypes, &combiner);
 
-    if (combiner == MPI_COMBINER_NAMED) {
+    if (combiner == g_mpi.combiner_named) {
         int size;
-        PMPI_Type_size(dtype, &size);
-        flat_list_append(out, base_offset, (MPI_Aint)size * count);
+        g_mpi.Type_size(dtype, &size);
+        flat_list_append(out, base_offset, (U_MPI_Aint)size * count);
         return;
     }
 
     int          *ints   = n_ints   ? malloc(n_ints   * sizeof(int))          : NULL;
-    MPI_Aint     *addrs  = n_addrs  ? malloc(n_addrs  * sizeof(MPI_Aint))     : NULL;
-    MPI_Datatype *dtypes = n_dtypes ? malloc(n_dtypes * sizeof(MPI_Datatype)) : NULL;
+    U_MPI_Aint     *addrs  = n_addrs  ? malloc(n_addrs  * sizeof(U_MPI_Aint))     : NULL;
+    U_MPI_Datatype *dtypes = n_dtypes ? malloc(n_dtypes * sizeof(U_MPI_Datatype)) : NULL;
 
-    PMPI_Type_get_contents(dtype, n_ints, n_addrs, n_dtypes, ints, addrs, dtypes);
+    g_mpi.Type_get_contents(dtype, n_ints, n_addrs, n_dtypes, ints, addrs, dtypes);
 
-    MPI_Aint lb, extent;
-    PMPI_Type_get_extent(dtype, &lb, &extent);
+    U_MPI_Aint lb, extent;
+    g_mpi.Type_get_extent(dtype, &lb, &extent);
 
     for (int rep = 0; rep < count; rep++) {
-        MPI_Aint rep_base = base_offset + (rep * extent);
+        U_MPI_Aint rep_base = base_offset + (rep * extent);
 
-        switch (combiner) {
-            case MPI_COMBINER_DUP:
-            case MPI_COMBINER_RESIZED:
+        if (0) {
+            } else if (combiner == g_mpi.combiner_dup || combiner == g_mpi.combiner_resized) {
                 flatten_datatype(dtypes[0], 1, rep_base, out);
-                break;
 
-            case MPI_COMBINER_CONTIGUOUS:
+            } else if (combiner == g_mpi.combiner_contiguous) {
                 flatten_datatype(dtypes[0], ints[0], rep_base, out);
-                break;
 
-            case MPI_COMBINER_VECTOR:
-            case MPI_COMBINER_HVECTOR: {
+            } else if (combiner == g_mpi.combiner_vector || combiner == g_mpi.combiner_hvector) { {
                 int vec_count = ints[0];
                 int blklen    = ints[1];
-                MPI_Aint sub_lb, sub_ext;
-                PMPI_Type_get_extent(dtypes[0], &sub_lb, &sub_ext);
-                MPI_Aint stride_bytes = (combiner == MPI_COMBINER_VECTOR)
-                                        ? (MPI_Aint)ints[2] * sub_ext
+                U_MPI_Aint sub_lb, sub_ext;
+                g_mpi.Type_get_extent(dtypes[0], &sub_lb, &sub_ext);
+                U_MPI_Aint stride_bytes = (combiner == g_mpi.combiner_vector)
+                                        ? (U_MPI_Aint)ints[2] * sub_ext
                                         : addrs[0];
 
                 for (int i = 0; i < vec_count; i++) {
                     flatten_datatype(dtypes[0], blklen, rep_base + i * stride_bytes, out);
                 }
-                break;
             }
 
-            case MPI_COMBINER_INDEXED:
-            case MPI_COMBINER_HINDEXED: {
+            } else if (combiner == g_mpi.combiner_indexed || combiner == g_mpi.combiner_hindexed) { {
                 int idx_count = ints[0];
-                MPI_Aint sub_lb, sub_ext;
-                PMPI_Type_get_extent(dtypes[0], &sub_lb, &sub_ext);
+                U_MPI_Aint sub_lb, sub_ext;
+                g_mpi.Type_get_extent(dtypes[0], &sub_lb, &sub_ext);
 
                 for (int i = 0; i < idx_count; i++) {
                     int blklen = ints[1 + i];
-                    MPI_Aint disp_bytes = (combiner == MPI_COMBINER_INDEXED)
-                                          ? (MPI_Aint)ints[1 + idx_count + i] * sub_ext
+                    U_MPI_Aint disp_bytes = (combiner == g_mpi.combiner_indexed)
+                                          ? (U_MPI_Aint)ints[1 + idx_count + i] * sub_ext
                                           : addrs[i];
                     flatten_datatype(dtypes[0], blklen, rep_base + disp_bytes, out);
                 }
-                break;
             }
 
-            case MPI_COMBINER_STRUCT: {
+            } else if (combiner == g_mpi.combiner_struct) { {
                 int struct_count = ints[0];
                 for (int i = 0; i < struct_count; i++) {
                     flatten_datatype(dtypes[i], ints[1 + i], rep_base + addrs[i], out);
                 }
-                break;
             }
 
-            default:
-                break;
+            } else {
         }
     }
 
     for (int i = 0; i < n_dtypes; i++) {
         int tmp_i, tmp_a, tmp_d, sub_comb;
-        PMPI_Type_get_envelope(dtypes[i], &tmp_i, &tmp_a, &tmp_d, &sub_comb);
-        if (sub_comb != MPI_COMBINER_NAMED) {
-            PMPI_Type_free(&dtypes[i]);
+        g_mpi.Type_get_envelope(dtypes[i], &tmp_i, &tmp_a, &tmp_d, &sub_comb);
+        if (sub_comb != g_mpi.combiner_named) {
+            g_mpi.Type_free(&dtypes[i]);
         }
     }
 
@@ -137,14 +128,14 @@ void build_daos_sgl(const void *buf, const flat_list_t *mem_flat, d_sg_list_t *s
     }
 }
 
-void build_daos_file_iod(const daos_file_ctx_t *ctx, MPI_Offset offset,
+void build_daos_file_iod(const daos_file_ctx_t *ctx, U_MPI_Offset offset,
                          size_t total_bytes, daos_array_iod_t *iod) {
     int etype_size, ft_size;
-    MPI_Aint ft_lb, ft_extent;
+    U_MPI_Aint ft_lb, ft_extent;
 
-    PMPI_Type_size(ctx->etype, &etype_size);
-    PMPI_Type_size(ctx->filetype, &ft_size);
-    PMPI_Type_get_extent(ctx->filetype, &ft_lb, &ft_extent);
+    g_mpi.Type_size(ctx->etype, &etype_size);
+    g_mpi.Type_size(ctx->filetype, &ft_size);
+    g_mpi.Type_get_extent(ctx->filetype, &ft_lb, &ft_extent);
 
     flat_list_t ft_flat;
     flat_list_init(&ft_flat);
@@ -162,7 +153,7 @@ void build_daos_file_iod(const daos_file_ctx_t *ctx, MPI_Offset offset,
     size_t skipped = 0;
 
     while (remaining > 0) {
-        MPI_Aint tile_base = ctx->disp + (MPI_Aint)(ft_tile_idx * ft_extent);
+        U_MPI_Aint tile_base = ctx->disp + (U_MPI_Aint)(ft_tile_idx * ft_extent);
 
         for (size_t i = 0; i < ft_flat.count && remaining > 0; i++) {
             size_t seg_off = (size_t)ft_flat.segs[i].offset;

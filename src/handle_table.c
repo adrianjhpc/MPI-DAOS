@@ -5,31 +5,42 @@
 #define TABLE_SIZE 256
 
 typedef struct handle_entry {
-    uintptr_t            key;
+    uint32_t key;
     daos_file_ctx_t     *ctx;
     struct handle_entry *next;
 } handle_entry_t;
 
 static handle_entry_t  *g_table[TABLE_SIZE] = {0};
 static pthread_rwlock_t g_table_lock = PTHREAD_RWLOCK_INITIALIZER;
-static atomic_uintptr_t g_next_fh_id = 0x1000;
+/* Start IDs at 1 so g_mpi.file_null (0) is never collided with */
+static atomic_uint g_next_fh_id = 1;
 
-static inline size_t hash_fh(MPI_File fh) {
-    uintptr_t k = (uintptr_t)fh;
+static inline size_t hash_fh(U_MPI_File fh) {
+    uint32_t k = (uint32_t)fh;
     return (k ^ (k >> 16)) & (TABLE_SIZE - 1);
 }
 
-MPI_File handle_table_alloc_fh(void) {
-    uintptr_t id = atomic_fetch_add(&g_next_fh_id, 1);
-    return (MPI_File)id;
+U_MPI_File handle_table_alloc_fh(void) {
+    uint32_t id = atomic_fetch_add(&g_next_fh_id, 1);
+    return (U_MPI_File)(uintptr_t)id;
 }
 
-int handle_table_insert(MPI_File fh, daos_file_ctx_t *ctx) {
+U_MPI_Fint mpidaos_file_c2f(U_MPI_File fh) {
+    if (fh == g_mpi.file_null) return 0;
+    return (U_MPI_Fint)(uintptr_t)fh;
+}
+
+U_MPI_File mpidaos_file_f2c(U_MPI_Fint f_fh) {
+    if (f_fh == 0) return g_mpi.file_null;
+    return (U_MPI_File)(uintptr_t)f_fh;
+}
+
+int handle_table_insert(U_MPI_File fh, daos_file_ctx_t *ctx) {
     size_t idx = hash_fh(fh);
     handle_entry_t *entry = malloc(sizeof(handle_entry_t));
     if (!entry) return -1;
 
-    entry->key = (uintptr_t)fh;
+    entry->key = (uint32_t)fh;
     entry->ctx = ctx;
 
     pthread_rwlock_wrlock(&g_table_lock);
@@ -39,9 +50,9 @@ int handle_table_insert(MPI_File fh, daos_file_ctx_t *ctx) {
     return 0;
 }
 
-daos_file_ctx_t *handle_table_lookup(MPI_File fh) {
+daos_file_ctx_t *handle_table_lookup(U_MPI_File fh) {
     size_t idx = hash_fh(fh);
-    uintptr_t k = (uintptr_t)fh;
+    uint32_t k = (uint32_t)fh;
     daos_file_ctx_t *ctx = NULL;
 
     pthread_rwlock_rdlock(&g_table_lock);
@@ -55,9 +66,9 @@ daos_file_ctx_t *handle_table_lookup(MPI_File fh) {
     return ctx;
 }
 
-daos_file_ctx_t *handle_table_remove(MPI_File fh) {
+daos_file_ctx_t *handle_table_remove(U_MPI_File fh) {
     size_t idx = hash_fh(fh);
-    uintptr_t k = (uintptr_t)fh;
+    uint32_t k = (uint32_t)fh;
     daos_file_ctx_t *ctx = NULL;
 
     pthread_rwlock_wrlock(&g_table_lock);
