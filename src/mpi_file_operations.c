@@ -29,22 +29,8 @@ int MPI_Finalize(void) {
 
 #define SHARED_FP_KEY "shared_fp"
 
-/* Derive paired KV metadata OID (OC_S1 routes all updates to one target) */
-static daos_obj_id_t filename_to_kv_oid(const char *filename) {
-    uint64_t h1 = 14695981039346656037ULL ^ 0x5A5A5A5A5A5A5A5AULL;
-    uint64_t h2 = 1099511628211ULL ^ 0xA5A5A5A5A5A5A5A5ULL;
-    for (const char *p = filename; *p; p++) {
-        h1 ^= (uint8_t)(*p);
-        h1 *= 1099511628211ULL;
-        h2 = (h2 << 5) + h2 + (uint8_t)(*p);
-    }
-    daos_obj_id_t oid = { .lo = h1, .hi = h2 };
-    daos_obj_generate_oid(DAOS_HDL_INVAL, &oid, DAOS_OT_KV_HASHED, OC_S1, 0, 0);
-    return oid;
-}
-
 /* Helper: derive deterministic 128-bit DAOS OID from filename */
-static daos_obj_id_t filename_to_oid(const char *filename) {
+static daos_obj_id_t filename_to_oid(daos_handle_t coh, const char *filename) {
     uint64_t h1 = 14695981039346656037ULL;
     uint64_t h2 = 1099511628211ULL;
     for (const char *p = filename; *p; p++) {
@@ -53,7 +39,21 @@ static daos_obj_id_t filename_to_oid(const char *filename) {
         h2 = (h2 << 5) + h2 + (uint8_t)(*p);
     }
     daos_obj_id_t oid = { .lo = h1, .hi = h2 };
-    daos_array_generate_oid(DAOS_HDL_INVAL, &oid, true, OC_SX, 0, 0);
+    daos_array_generate_oid(coh, &oid, true, OC_SX, 0, 0);
+    return oid;
+}
+
+/* Derive paired KV metadata OID (OC_S1 routes all updates to one target) */
+static daos_obj_id_t filename_to_kv_oid(daos_handle_t coh, const char *filename) {
+    uint64_t h1 = 14695981039346656037ULL ^ 0x5A5A5A5A5A5A5A5AULL;
+    uint64_t h2 = 1099511628211ULL ^ 0xA5A5A5A5A5A5A5A5ULL;
+    for (const char *p = filename; *p; p++) {
+        h1 ^= (uint8_t)(*p);
+        h1 *= 1099511628211ULL;
+        h2 = (h2 << 5) + h2 + (uint8_t)(*p);
+    }
+    daos_obj_id_t oid = { .lo = h1, .hi = h2 };
+    daos_obj_generate_oid(coh, &oid, DAOS_OT_KV_HASHED, OC_S1, 0, 0);
     return oid;
 }
 
@@ -143,26 +143,31 @@ int MPI_File_open(U_MPI_Comm comm, const char *filename, int amode,
     /* Strip leading directory path if present and map filename to DAOS array OID */
     const char *base = strrchr(filename, '/');
     base = base ? base + 1 : filename;
-    ctx->oid = filename_to_oid(base);
+    ctx->oid = filename_to_oid(ctx->coh, base);
+
+    daos_size_t cell_size = 1;
+    daos_size_t chunk_size = 0;
 
     if (rank == 0 && (amode & U_MPI_MODE_CREATE)) {
-        /* 1 MiB chunk size, 1-byte cell size */
-        rc = daos_array_create(ctx->coh, ctx->oid, DAOS_TX_NONE, 1, 1048576, &ctx->oh, NULL);
+        rc = daos_array_create(ctx->coh, ctx->oid, DAOS_TX_NONE,
+                           1, 0, &ctx->oh, NULL);
         if (rc == -DER_EXIST) {
-            rc = daos_array_open(ctx->coh, ctx->oid, DAOS_TX_NONE, DAOS_OO_RW, NULL, NULL, &ctx->oh, NULL);
+            rc = daos_array_open(ctx->coh, ctx->oid, DAOS_TX_NONE,
+                             DAOS_OO_RW, &cell_size, &chunk_size, &ctx->oh, NULL);
         }
     }
     g_mpi.Barrier(ctx->comm);
 
     if (rank != 0 || !(amode & U_MPI_MODE_CREATE)) {
-        unsigned int oflags = (amode & U_MPI_MODE_RDONLY) ? DAOS_OO_RO : DAOS_OO_RW;
         daos_size_t cell_size, chunk_size;
-        rc = daos_array_open(ctx->coh, ctx->oid, DAOS_TX_NONE, oflags,
-                             &cell_size, &chunk_size, &ctx->oh, NULL);
+        unsigned int oflags = (amode & U_MPI_MODE_RDONLY) ? DAOS_OO_RO : DAOS_OO_RW;
+        rc = daos_array_open(ctx->coh, ctx->oid, DAOS_TX_NONE,
+                             oflags, &cell_size, &chunk_size, &ctx->oh, NULL);
+
     }
 
     /* Open the dedicated KV metadata object for shared file pointer state */
-    ctx->kv_oid = filename_to_kv_oid(base);
+    ctx->kv_oid = filename_to_kv_oid(ctx->coh, base);
     unsigned int kv_flags = (amode & U_MPI_MODE_RDONLY) ? DAOS_OO_RO : DAOS_OO_RW;
     rc = daos_kv_open(ctx->coh, ctx->kv_oid, kv_flags, &ctx->kv_oh, NULL);
     if (rc != 0) goto err_free;

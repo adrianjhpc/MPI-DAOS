@@ -21,6 +21,24 @@ static inline void update_f_status(void *c_status, U_MPI_Fint *f_status) {
     }
 }
 
+void mpi_init_(U_MPI_Fint *ierr) {
+    mpidaos_resolve_mpi_abi();
+    int argc = 0;
+    char **argv = NULL;
+    *ierr = MPI_Init(&argc, &argv);
+}
+
+void mpi_init_thread_(U_MPI_Fint *required, U_MPI_Fint *provided, U_MPI_Fint *ierr) {
+    mpidaos_resolve_mpi_abi();
+    int argc = 0;
+    char **argv = NULL;
+    *ierr = MPI_Init_thread(&argc, &argv, *required, provided);
+}
+
+void mpi_finalize_(U_MPI_Fint *ierr) {
+    *ierr = MPI_Finalize();
+}
+
 /* ---------------- File Lifecycle & View ---------------- */
 
 void mpi_file_open_(U_MPI_Fint *comm, const char *filename, U_MPI_Fint *amode,

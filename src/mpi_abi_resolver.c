@@ -6,35 +6,47 @@
 
 mpi_abi_t g_mpi = {0};
 
+static void *resolve_mpi_symbol(const char *sym_name) {
+    /* 1. Standard RTLD_NEXT lookup (works when libmpi.so is linked into the app) */
+    void *sym = dlsym(RTLD_NEXT, sym_name);
+    if (sym) return sym;
+
+    /* 2. Fallback to RTLD_DEFAULT (handles cases where libmpi.so was dlopened) */
+    sym = dlsym(RTLD_DEFAULT, sym_name);
+    if (sym) return sym;
+
+    fprintf(stderr, "[MPI-DAOS] Fatal: failed to resolve %s\n", sym_name);
+    abort();
+}
+
 #define RESOLVE_SYM(field, sym_name) do { \
-    g_mpi.field = dlsym(RTLD_NEXT, sym_name); \
-    if (!g_mpi.field) { \
-        fprintf(stderr, "[MPI-DAOS] Fatal: failed to resolve %s\n", sym_name); \
-        abort(); \
-    } \
+    g_mpi.field = resolve_mpi_symbol(sym_name); \
 } while (0)
 
-__attribute__((constructor))
+/* Do NOT use __attribute__((constructor)) — only run when MPI_Init is called */
 void mpidaos_resolve_mpi_abi(void) {
     if (g_mpi.Init != NULL) return;
 
     void *ompi_world = dlsym(RTLD_NEXT, "ompi_mpi_comm_world");
+    if (!ompi_world) {
+        ompi_world = dlsym(RTLD_DEFAULT, "ompi_mpi_comm_world");
+    }
+
     if (ompi_world != NULL) {
-        /* OpenMPI ABI (4.x / 5.x) */
+        /* OpenMPI ABI */
         g_mpi.is_openmpi          = 1;
         g_mpi.comm_world          = (U_MPI_Comm)ompi_world;
-        g_mpi.dtype_byte          = (U_MPI_Datatype)dlsym(RTLD_NEXT, "ompi_mpi_byte");
-        g_mpi.dtype_int           = (U_MPI_Datatype)dlsym(RTLD_NEXT, "ompi_mpi_int");
-        g_mpi.dtype_uint64        = (U_MPI_Datatype)dlsym(RTLD_NEXT, "ompi_mpi_uint64_t");
-        g_mpi.dtype_int64         = (U_MPI_Datatype)dlsym(RTLD_NEXT, "ompi_mpi_int64_t");
-        g_mpi.info_null           = (U_MPI_Info)dlsym(RTLD_NEXT, "ompi_mpi_info_null");
-        g_mpi.file_null           = (U_MPI_File)dlsym(RTLD_NEXT, "ompi_mpi_file_null");
-        g_mpi.status_ignore       = dlsym(RTLD_NEXT, "ompi_status_ignore");
-        U_MPI_Fint **f_ign        = (U_MPI_Fint **)dlsym(RTLD_NEXT, "MPI_F_STATUS_IGNORE");
+        g_mpi.dtype_byte          = (U_MPI_Datatype)resolve_mpi_symbol("ompi_mpi_byte");
+        g_mpi.dtype_int           = (U_MPI_Datatype)resolve_mpi_symbol("ompi_mpi_int");
+        g_mpi.dtype_uint64        = (U_MPI_Datatype)resolve_mpi_symbol("ompi_mpi_uint64_t");
+        g_mpi.dtype_int64         = (U_MPI_Datatype)resolve_mpi_symbol("ompi_mpi_int64_t");
+        g_mpi.info_null           = (U_MPI_Info)resolve_mpi_symbol("ompi_mpi_info_null");
+        g_mpi.file_null           = (U_MPI_File)resolve_mpi_symbol("ompi_mpi_file_null");
+        g_mpi.status_ignore       = NULL;
+        U_MPI_Fint **f_ign        = (U_MPI_Fint **)resolve_mpi_symbol("MPI_F_STATUS_IGNORE");
         g_mpi.f_status_ignore     = f_ign ? *f_ign : NULL;
-        g_mpi.op_sum              = (int)(intptr_t)dlsym(RTLD_NEXT, "ompi_mpi_op_sum");
+        g_mpi.op_sum = (U_MPI_Op)resolve_mpi_symbol("ompi_mpi_op_sum");
 
-        /* OpenMPI MPI_COMBINER_* enum values */
         g_mpi.combiner_named      = 0;
         g_mpi.combiner_dup        = 1;
         g_mpi.combiner_contiguous = 2;
@@ -44,6 +56,10 @@ void mpidaos_resolve_mpi_abi(void) {
         g_mpi.combiner_hindexed   = 7;
         g_mpi.combiner_struct     = 10;
         g_mpi.combiner_resized    = 17;
+        g_mpi.err_no_mem          = 39;
+        g_mpi.err_file            = 30;
+        g_mpi.err_bad_file        = 25;
+        g_mpi.err_io              = 37;
     } else {
         /* MPICH / Cray MPICH / Intel MPI ABI */
         g_mpi.is_openmpi          = 0;
@@ -58,7 +74,6 @@ void mpidaos_resolve_mpi_abi(void) {
         g_mpi.f_status_ignore     = (U_MPI_Fint *)dlsym(RTLD_NEXT, "MPI_F_STATUS_IGNORE");
         g_mpi.op_sum              = 0x58000003;
 
-        /* MPICH MPI_COMBINER_* enum values */
         g_mpi.combiner_named      = 1;
         g_mpi.combiner_dup        = 2;
         g_mpi.combiner_contiguous = 3;
@@ -68,6 +83,10 @@ void mpidaos_resolve_mpi_abi(void) {
         g_mpi.combiner_hindexed   = 7;
         g_mpi.combiner_struct     = 11;
         g_mpi.combiner_resized    = 18;
+        g_mpi.err_no_mem          = 34;
+        g_mpi.err_file            = 27;
+        g_mpi.err_bad_file        = 20;
+        g_mpi.err_io              = 32;
     }
 
     RESOLVE_SYM(Init,                "PMPI_Init");

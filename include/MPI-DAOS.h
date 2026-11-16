@@ -54,6 +54,11 @@ void build_daos_file_iod(const daos_file_ctx_t *ctx, U_MPI_Offset offset,
 U_MPI_Fint mpidaos_file_c2f(U_MPI_File fh);
 U_MPI_File mpidaos_file_f2c(U_MPI_Fint f_fh);
 
+/* Lifecycle hooks implemented in mpi_file_operations.c */
+int MPI_Init(int *argc, char ***argv);
+int MPI_Init_thread(int *argc, char ***argv, int required, int *provided);
+int MPI_Finalize(void);
+
 /* Public C MPI-I/O entry points implemented in mpi_file_operations.c */
 int MPI_File_open(U_MPI_Comm comm, const char *filename, int amode,
                   U_MPI_Info info, U_MPI_File *fh);

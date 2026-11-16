@@ -16,6 +16,7 @@ typedef intptr_t  U_MPI_File;
 typedef int64_t   U_MPI_Offset;
 typedef intptr_t  U_MPI_Aint;
 typedef int       U_MPI_Fint;
+typedef intptr_t  U_MPI_Op;
 
 /* Standard MPI return codes (identical across MPICH and OpenMPI) */
 #define U_MPI_SUCCESS       0
@@ -24,10 +25,10 @@ typedef int       U_MPI_Fint;
 #define U_MPI_ERR_TYPE      3
 #define U_MPI_ERR_COMM      5
 #define U_MPI_ERR_INFO      28
-#define U_MPI_ERR_NO_MEM    34
-#define U_MPI_ERR_FILE      27
-#define U_MPI_ERR_BAD_FILE  20
-#define U_MPI_ERR_IO        32
+#define U_MPI_ERR_NO_MEM    (g_mpi.err_no_mem)
+#define U_MPI_ERR_FILE      (g_mpi.err_file)
+#define U_MPI_ERR_BAD_FILE  (g_mpi.err_bad_file)
+#define U_MPI_ERR_IO        (g_mpi.err_io)
 
 /* File open modes (universal POSIX-mapped bitmasks) */
 #define U_MPI_MODE_RDONLY   2
@@ -50,7 +51,12 @@ typedef struct {
     U_MPI_File     file_null;
     void          *status_ignore;
     U_MPI_Fint    *f_status_ignore;
-    int            op_sum;
+    U_MPI_Op       op_sum;
+
+    int            err_no_mem;
+    int            err_file;
+    int            err_bad_file;
+    int            err_io;
 
     /* Combiner constants (differ between MPICH and OpenMPI) */
     int            combiner_named;
@@ -73,7 +79,7 @@ typedef struct {
     int (*Comm_free)(U_MPI_Comm *);
     int (*Barrier)(U_MPI_Comm);
     int (*Bcast)(void *, int, U_MPI_Datatype, int, U_MPI_Comm);
-    int (*Exscan)(const void *, void *, int, U_MPI_Datatype, int, U_MPI_Comm);
+    int (*Exscan)(const void *, void *, int, U_MPI_Datatype, U_MPI_Op, U_MPI_Comm);
     int (*Type_size)(U_MPI_Datatype, int *);
     int (*Type_get_extent)(U_MPI_Datatype, U_MPI_Aint *, U_MPI_Aint *);
     int (*Type_get_envelope)(U_MPI_Datatype, int *, int *, int *, int *);
